@@ -1,0 +1,112 @@
+package com.astris.teleprompter
+
+import android.app.Activity
+import android.content.Intent
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.astris.teleprompter.ui.ScriptEditorViewModel
+import com.astris.teleprompter.ui.ViewModelProvider
+import com.astris.teleprompter.ui.theme.TeleprompterTheme
+import kotlinx.coroutines.launch
+
+const val EXTRA_SCRIPT_ID = "com.astris.teleprompter.SCRIPT_ID"
+
+class ScriptEditorActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            TeleprompterTheme {
+                ScriptEditorScreen()
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ScriptEditorScreen(
+    viewModel: ScriptEditorViewModel = viewModel(factory = ViewModelProvider.Factory)
+) {
+    val uiState by viewModel.uiState.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(if (uiState.isNewScript) "New Script" else "Edit Script") },
+                actions = {
+                    // Save button
+                    IconButton(onClick = {
+                        coroutineScope.launch {
+                            viewModel.saveScript()
+                            (context as? Activity)?.finish()
+                        }
+                    }) {
+                        Icon(Icons.Default.Done, contentDescription = "Save Script")
+                    }
+                    // Delete button
+                    if (!uiState.isNewScript) {
+                        IconButton(onClick = {
+                            coroutineScope.launch {
+                                viewModel.deleteScript()
+                                (context as? Activity)?.finish()
+                            }
+                        }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete Script")
+                        }
+                    }
+                }
+            )
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = {
+                coroutineScope.launch {
+                    // Save the script first
+                    viewModel.saveScript()
+                    // Then start the teleprompter
+                    val intent = Intent(context, TeleprompterService::class.java)
+                    intent.putExtra("text", uiState.content)
+                    context.startService(intent)
+                }
+            }) {
+                Icon(Icons.Default.PlayArrow, contentDescription = "Start Teleprompter")
+            }
+        }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(16.dp)
+        ) {
+            OutlinedTextField(
+                value = uiState.title,
+                onValueChange = { viewModel.updateTitle(it) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Title") }
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            OutlinedTextField(
+                value = uiState.content,
+                onValueChange = { viewModel.updateContent(it) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                label = { Text("Script content") }
+            )
+        }
+    }
+}

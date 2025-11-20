@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "93906755524",
+    "project_id": "teleprompter-558cc",
+    "storage_bucket": "teleprompter-558cc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:93906755524:android:b5fa976d9a116325134e91",
+        "android_client_info": {
+          "package_name": "com.astris.teleprompter"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCkDOSUwpFW5mzFj9oNP7W17hj0e6UmOh4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
