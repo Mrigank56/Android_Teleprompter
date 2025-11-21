@@ -3,6 +3,7 @@ package com.astris.teleprompter
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
@@ -76,10 +77,15 @@ fun ScriptEditorScreen(
                 coroutineScope.launch {
                     // Save the script first
                     viewModel.saveScript()
-                    // Then start the teleprompter
-                    val intent = Intent(context, TeleprompterService::class.java)
-                    intent.putExtra("text", uiState.content)
-                    context.startService(intent)
+
+                    // Then start the teleprompter service
+                    val serviceIntent = Intent(context, TeleprompterService::class.java)
+                    serviceIntent.putExtra("text", uiState.content)
+                    context.startService(serviceIntent)
+
+                    // Finally, open the camera app
+                    val cameraIntent = Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+                    context.startActivity(cameraIntent)
                 }
             }) {
                 Icon(Icons.Default.PlayArrow, contentDescription = "Start Teleprompter")
