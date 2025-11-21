@@ -14,15 +14,22 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -31,7 +38,9 @@ import com.astris.teleprompter.ui.MainViewModel
 import com.astris.teleprompter.ui.ViewModelProvider
 import com.astris.teleprompter.ui.theme.TeleprompterTheme
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class,
+    ExperimentalComposeUiApi::class
+)
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,7 +56,12 @@ class MainActivity : ComponentActivity() {
         viewModel: MainViewModel = viewModel(factory = ViewModelProvider.Factory)
     ) {
         val uiState by viewModel.uiState.collectAsState()
+        val searchQuery by viewModel.searchQuery.collectAsState()
         val context = LocalContext.current
+        val keyboardController = LocalSoftwareKeyboardController.current
+        val focusManager = LocalFocusManager.current
+        var isSearchFocused by remember { mutableStateOf(false) }
+
         var hasPermission by remember {
             mutableStateOf(
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -69,15 +83,45 @@ class MainActivity : ComponentActivity() {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text("Search scripts") },
+                    title = {
+                        TextField(
+                            value = searchQuery,
+                            onValueChange = { viewModel.onSearchQueryChange(it) },
+                            placeholder = { Text("Search scripts") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onFocusChanged { focusState ->
+                                    isSearchFocused = focusState.isFocused
+                                },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+                            trailingIcon = {
+                                if (isSearchFocused) {
+                                    IconButton(onClick = {
+                                        viewModel.onSearchQueryChange("")
+                                        keyboardController?.hide()
+                                        focusManager.clearFocus()
+                                    }) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = "Clear search"
+                                        )
+                                    }
+                                }
+                            },
+                            shape = RoundedCornerShape(24.dp),
+                            colors = TextFieldDefaults.textFieldColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent
+                            )
+                        )
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent
+                    ),
                     navigationIcon = {
                         IconButton(onClick = { /* TODO: Handle menu click */ }) {
                             Icon(Icons.Default.Menu, contentDescription = "Menu")
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = { /* TODO: Handle search click */ }) {
-                            Icon(Icons.Default.Search, contentDescription = "Search")
                         }
                     }
                 )
@@ -116,7 +160,7 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("No scripts yet. Tap the '+' button to add one.")
+                        Text(if (searchQuery.isEmpty()) "No scripts yet. Tap the '+' button to add one." else "No scripts found.")
                     }
                 } else {
                     LazyVerticalStaggeredGrid(
