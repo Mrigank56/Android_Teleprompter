@@ -7,6 +7,7 @@ import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
@@ -16,7 +17,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.astris.teleprompter.ui.ScriptEditorViewModel
 import com.astris.teleprompter.ui.ViewModelProvider
@@ -48,7 +51,25 @@ fun ScriptEditorScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (uiState.isNewScript) "New Script" else "Edit Script") },
+                title = {
+                    BasicTextField(
+                        value = uiState.title,
+                        onValueChange = { viewModel.updateTitle(it) },
+                        modifier = Modifier.fillMaxWidth(),
+                        textStyle = TextStyle(
+                            fontSize = 20.sp,
+                            color = MaterialTheme.colorScheme.onBackground
+                        ),
+                        decorationBox = { innerTextField ->
+                            Box(modifier = Modifier.fillMaxWidth()) {
+                                if (uiState.title.isEmpty()) {
+                                    Text("Title", fontSize = 20.sp, color = Color.Gray)
+                                }
+                                innerTextField()
+                            }
+                        }
+                    )
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent
                 ),
@@ -102,20 +123,26 @@ fun ScriptEditorScreen(
                 .padding(paddingValues)
                 .padding(16.dp)
         ) {
-            OutlinedTextField(
-                value = uiState.title,
-                onValueChange = { viewModel.updateTitle(it) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Title") }
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            OutlinedTextField(
+            BasicTextField(
                 value = uiState.content,
                 onValueChange = { viewModel.updateContent(it) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
-                label = { Text("Script content") }
+                textStyle = TextStyle(
+                    fontSize = 16.sp,
+                    color = MaterialTheme.colorScheme.onBackground
+                ),
+                decorationBox = { innerTextField ->
+                    Box(
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        if (uiState.content.isEmpty()) {
+                            Text("Script content", fontSize = 16.sp, color = Color.Gray)
+                        }
+                        innerTextField()
+                    }
+                }
             )
         }
     }
