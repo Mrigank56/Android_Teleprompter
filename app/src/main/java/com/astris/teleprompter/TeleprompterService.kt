@@ -23,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
@@ -130,12 +131,15 @@ class TeleprompterService : Service() {
 fun TeleprompterView(text: String, onClose: () -> Unit, onDrag: (Float, Float) -> Unit) {
     var isPlaying by remember { mutableStateOf(false) }
     var speed by remember { mutableStateOf(3f) } // Speed levels from 1f to 10f
+    var rotation by remember { mutableStateOf(0f) }
+    var alpha by remember { mutableStateOf(0.8f) }
+    var showTransparencySlider by remember { mutableStateOf(false) }
+    var showSpeedSlider by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
     val haptics = LocalHapticFeedback.current
 
     LaunchedEffect(isPlaying, speed) {
         if (isPlaying) {
-            // Lower delay = faster speed. Formula creates a curve for more noticeable changes.
             val scrollDelay = (100 / speed).toLong()
             while (true) {
                 scrollState.scrollTo(scrollState.value + 1)
@@ -152,9 +156,10 @@ fun TeleprompterView(text: String, onClose: () -> Unit, onDrag: (Float, Float) -
                     change.consume()
                     onDrag(dragAmount.x, dragAmount.y)
                 }
-            },
+            }
+            .graphicsLayer(rotationZ = rotation),
         shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.8f))
+        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = alpha))
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -169,42 +174,73 @@ fun TeleprompterView(text: String, onClose: () -> Unit, onDrag: (Float, Float) -
                 fontSize = 24.sp
             )
             Spacer(modifier = Modifier.height(16.dp))
+
+            if (showTransparencySlider) {
+                Slider(
+                    value = alpha,
+                    onValueChange = { newAlpha -> alpha = newAlpha },
+                    valueRange = 0.2f..1f,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+            }
+
+            if (showSpeedSlider) {
+                Slider(
+                    value = speed,
+                    onValueChange = { newSpeed -> speed = newSpeed },
+                    valueRange = 1f..10f,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+            }
+
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(
-                    onClick = {
-                        isPlaying = !isPlaying
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    },
-                    modifier = Modifier.size(64.dp),
-                    colors = IconButtonDefaults.iconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    )
-                ) {
+                IconButton(onClick = {
+                    isPlaying = !isPlaying
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                }) {
                     Icon(
                         if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                         contentDescription = if (isPlaying) "Pause" else "Play",
-                        modifier = Modifier.size(48.dp)
+                        modifier = Modifier.size(48.dp),
+                        tint = Color.White
                     )
                 }
             }
-            Slider(
-                value = speed,
-                onValueChange = { newSpeed -> speed = newSpeed },
-                valueRange = 1f..10f,
-                steps = 8, // 9 steps for 10 values (1..10)
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            IconButton(onClick = {
-                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                onClose()
-            }, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceAround,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onClose()
+                }) {
+                    Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+                }
+
+                IconButton(onClick = {
+                    showTransparencySlider = !showTransparencySlider
+                    if (showTransparencySlider) showSpeedSlider = false
+                }) {
+                    Icon(Icons.Default.Tonality, contentDescription = "Transparency", tint = Color.White)
+                }
+
+                IconButton(onClick = {
+                    showSpeedSlider = !showSpeedSlider
+                    if (showSpeedSlider) showTransparencySlider = false
+                }) {
+                    Icon(Icons.Default.Speed, contentDescription = "Speed", tint = Color.White)
+                }
+
+                IconButton(onClick = { rotation = if (rotation == 0f) 90f else 0f }) {
+                    Icon(Icons.Default.ScreenRotation, contentDescription = "Rotate", tint = Color.White)
+                }
             }
         }
     }

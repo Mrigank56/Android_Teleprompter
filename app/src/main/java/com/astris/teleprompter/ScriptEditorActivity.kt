@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.astris.teleprompter.ui.ScriptEditorViewModel
 import com.astris.teleprompter.ui.ViewModelProvider
@@ -31,6 +32,7 @@ const val EXTRA_SCRIPT_ID = "com.astris.teleprompter.SCRIPT_ID"
 class ScriptEditorActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContent {
             TeleprompterTheme {
                 ScriptEditorScreen()
@@ -122,6 +124,7 @@ fun ScriptEditorScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
                 .padding(16.dp)
+                .imePadding()
         ) {
             BasicTextField(
                 value = uiState.content,
