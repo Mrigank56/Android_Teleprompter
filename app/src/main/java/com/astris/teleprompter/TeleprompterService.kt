@@ -5,7 +5,9 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.os.Build
@@ -38,11 +40,17 @@ import com.astris.teleprompter.ui.theme.TeleprompterTheme
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
+private const val PREFS_NAME = "teleprompter_settings"
+private const val KEY_SPEED = "speed"
+private const val KEY_ALPHA = "alpha"
+private const val KEY_ROTATION = "rotation"
+
 class TeleprompterService : Service() {
 
     private lateinit var windowManager: WindowManager
     private lateinit var floatingView: ComposeView
     private lateinit var customLifecycleOwner: CustomLifecycleOwner
+    private lateinit var prefs: SharedPreferences
 
     override fun onBind(intent: Intent?): IBinder? {
         return null
@@ -51,6 +59,7 @@ class TeleprompterService : Service() {
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate() {
         super.onCreate()
+        prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         customLifecycleOwner = CustomLifecycleOwner()
         customLifecycleOwner.performRestore(null)
         customLifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
@@ -107,13 +116,25 @@ class TeleprompterService : Service() {
 
         floatingView.setContent {
             TeleprompterTheme {
-                TeleprompterView(text = text,
+                TeleprompterView(
+                    text = text,
+                    initialSpeed = prefs.getFloat(KEY_SPEED, 3f),
+                    initialAlpha = prefs.getFloat(KEY_ALPHA, 0.8f),
+                    initialRotation = prefs.getFloat(KEY_ROTATION, 0f),
                     onClose = { stopSelf() },
                     onDrag = { x, y ->
                         params.x += x.roundToInt()
                         params.y += y.roundToInt()
                         windowManager.updateViewLayout(floatingView, params)
-                    })
+                    },
+                    onSettingsChange = { speed, alpha, rotation ->
+                        prefs.edit()
+                            .putFloat(KEY_SPEED, speed)
+                            .putFloat(KEY_ALPHA, alpha)
+                            .putFloat(KEY_ROTATION, rotation)
+                            .apply()
+                    }
+                )
             }
         }
         windowManager.addView(floatingView, params)
@@ -128,11 +149,19 @@ class TeleprompterService : Service() {
 }
 
 @Composable
-fun TeleprompterView(text: String, onClose: () -> Unit, onDrag: (Float, Float) -> Unit) {
+fun TeleprompterView(
+    text: String,
+    initialSpeed: Float,
+    initialAlpha: Float,
+    initialRotation: Float,
+    onClose: () -> Unit,
+    onDrag: (Float, Float) -> Unit,
+    onSettingsChange: (Float, Float, Float) -> Unit
+) {
     var isPlaying by remember { mutableStateOf(false) }
-    var speed by remember { mutableStateOf(3f) } // Speed levels from 1f to 10f
-    var rotation by remember { mutableStateOf(0f) }
-    var alpha by remember { mutableStateOf(0.8f) }
+    var speed by remember { mutableStateOf(initialSpeed) }
+    var rotation by remember { mutableStateOf(initialRotation) }
+    var alpha by remember { mutableStateOf(initialAlpha) }
     var showTransparencySlider by remember { mutableStateOf(false) }
     var showSpeedSlider by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
@@ -176,23 +205,38 @@ fun TeleprompterView(text: String, onClose: () -> Unit, onDrag: (Float, Float) -
             Spacer(modifier = Modifier.height(16.dp))
 
             if (showTransparencySlider) {
-                Slider(
-                    value = alpha,
-                    onValueChange = { newAlpha -> alpha = newAlpha },
-                    valueRange = 0.2f..1f,
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Slider(
+                        value = alpha,
+                        onValueChange = { newAlpha ->
+                            alpha = newAlpha
+                            onSettingsChange(speed, alpha, rotation)
+                        },
+                        valueRange = 0.2f..1f,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { showTransparencySlider = false }) {
+                        Icon(Icons.Default.Close, contentDescription = "Close Slider", tint = Color.White)
+                    }
+                }
             }
 
             if (showSpeedSlider) {
-                Slider(
-                    value = speed,
-                    onValueChange = { newSpeed -> speed = newSpeed },
-                    valueRange = 1f..10f,
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Slider(
+                        value = speed,
+                        onValueChange = { newSpeed ->
+                            speed = newSpeed
+                            onSettingsChange(speed, alpha, rotation)
+                        },
+                        valueRange = 1f..10f,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { showSpeedSlider = false }) {
+                        Icon(Icons.Default.Close, contentDescription = "Close Slider", tint = Color.White)
+                    }
+                }
             }
-
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -238,7 +282,10 @@ fun TeleprompterView(text: String, onClose: () -> Unit, onDrag: (Float, Float) -
                     Icon(Icons.Default.Speed, contentDescription = "Speed", tint = Color.White)
                 }
 
-                IconButton(onClick = { rotation = if (rotation == 0f) 90f else 0f }) {
+                IconButton(onClick = {
+                    rotation = if (rotation == 0f) 90f else 0f
+                    onSettingsChange(speed, alpha, rotation)
+                }) {
                     Icon(Icons.Default.ScreenRotation, contentDescription = "Rotate", tint = Color.White)
                 }
             }
