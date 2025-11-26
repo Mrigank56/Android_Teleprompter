@@ -1,6 +1,5 @@
 package com.astris.teleprompter
 
-import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import android.provider.MediaStore
@@ -21,34 +20,59 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.ViewModelProvider
 import com.astris.teleprompter.ui.ScriptEditorViewModel
-import com.astris.teleprompter.ui.ViewModelProvider
+import com.astris.teleprompter.ui.ViewModelFactory
 import com.astris.teleprompter.ui.theme.TeleprompterTheme
 import kotlinx.coroutines.launch
 
 const val EXTRA_SCRIPT_ID = "com.astris.teleprompter.SCRIPT_ID"
 
 class ScriptEditorActivity : ComponentActivity() {
+
+    private lateinit var viewModel: ScriptEditorViewModel
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        val factory = ViewModelFactory(this, application, intent.extras)
+        viewModel = ViewModelProvider(this, factory)[ScriptEditorViewModel::class.java]
+
         setContent {
-            TeleprompterTheme {
-                ScriptEditorScreen()
+            val isDarkTheme by viewModel.isDarkTheme.collectAsState()
+            TeleprompterTheme(darkTheme = isDarkTheme) {
+                ScriptEditorScreen(viewModel)
             }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ScriptEditorScreen(
-    viewModel: ScriptEditorViewModel = viewModel(factory = ViewModelProvider.Factory)
+    viewModel: ScriptEditorViewModel
 ) {
+    val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
     val coroutineScope = rememberCoroutineScope()
-    val context = LocalContext.current
+    val isKeyboardOpen = WindowInsets.isImeVisible
+
+    val playAction = {
+        coroutineScope.launch {
+            // Save the script first
+            viewModel.saveScript()
+
+            // Then start the teleprompter service
+            val serviceIntent = Intent(context, TeleprompterService::class.java)
+            serviceIntent.putExtra("text", uiState.content)
+            context.startService(serviceIntent)
+
+            // Finally, open the camera app
+            val cameraIntent = Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+            context.startActivity(cameraIntent)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -76,21 +100,24 @@ fun ScriptEditorScreen(
                     containerColor = Color.Transparent
                 ),
                 actions = {
-                    // Save button
+                    if (isKeyboardOpen) {
+                        IconButton(onClick = { playAction() }) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = "Start Teleprompter")
+                        }
+                    }
                     IconButton(onClick = {
                         coroutineScope.launch {
                             viewModel.saveScript()
-                            (context as? Activity)?.finish()
+                            (context as? ComponentActivity)?.finish()
                         }
                     }) {
                         Icon(Icons.Default.Done, contentDescription = "Save Script")
                     }
-                    // Delete button
                     if (!uiState.isNewScript) {
                         IconButton(onClick = {
                             coroutineScope.launch {
                                 viewModel.deleteScript()
-                                (context as? Activity)?.finish()
+                                (context as? ComponentActivity)?.finish()
                             }
                         }) {
                             Icon(Icons.Default.Delete, contentDescription = "Delete Script")
@@ -100,22 +127,10 @@ fun ScriptEditorScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = {
-                coroutineScope.launch {
-                    // Save the script first
-                    viewModel.saveScript()
-
-                    // Then start the teleprompter service
-                    val serviceIntent = Intent(context, TeleprompterService::class.java)
-                    serviceIntent.putExtra("text", uiState.content)
-                    context.startService(serviceIntent)
-
-                    // Finally, open the camera app
-                    val cameraIntent = Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
-                    context.startActivity(cameraIntent)
+            if (!isKeyboardOpen) {
+                FloatingActionButton(onClick = { playAction() }) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = "Start Teleprompter")
                 }
-            }) {
-                Icon(Icons.Default.PlayArrow, contentDescription = "Start Teleprompter")
             }
         }
     ) { paddingValues ->

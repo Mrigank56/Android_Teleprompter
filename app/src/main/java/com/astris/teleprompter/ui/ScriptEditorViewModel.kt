@@ -1,5 +1,7 @@
 package com.astris.teleprompter.ui
 
+import android.app.Application
+import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -9,15 +11,25 @@ import com.astris.teleprompter.data.ScriptRepository
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
+private const val PREFS_NAME = "teleprompter_main_settings"
+private const val KEY_IS_DARK_THEME = "is_dark_theme"
+
 class ScriptEditorViewModel(
+    application: Application,
     savedStateHandle: SavedStateHandle,
     private val scriptRepository: ScriptRepository
 ) : ViewModel() {
+
+    private val prefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     private val scriptId: Int? = savedStateHandle[EXTRA_SCRIPT_ID]
 
     private val _uiState = MutableStateFlow(ScriptEditorUiState())
     val uiState: StateFlow<ScriptEditorUiState> = _uiState.asStateFlow()
+
+    val isDarkTheme: StateFlow<Boolean> = flow {
+        emit(prefs.getBoolean(KEY_IS_DARK_THEME, true))
+    }.stateIn(viewModelScope, SharingStarted.Lazily, true)
 
     init {
         if (scriptId != null) {
