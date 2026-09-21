@@ -60,4 +60,10 @@ class MainViewModel(
         _isDarkTheme.value = newTheme
         prefs.edit().putBoolean(KEY_IS_DARK_THEME, newTheme).apply()
     }
+
+    fun deleteScript(script: Script) {
+        viewModelScope.launch {
+            scriptRepository.delete(script)
+        }
+    }
 }

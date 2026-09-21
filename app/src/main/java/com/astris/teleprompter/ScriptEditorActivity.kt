@@ -1,8 +1,11 @@
 package com.astris.teleprompter
 
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
@@ -25,8 +28,10 @@ import com.astris.teleprompter.ui.ScriptEditorViewModel
 import com.astris.teleprompter.ui.ViewModelFactory
 import com.astris.teleprompter.ui.theme.TeleprompterTheme
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 const val EXTRA_SCRIPT_ID = "com.astris.teleprompter.SCRIPT_ID"
+private const val REFERENCE_WPM = 140
 
 class ScriptEditorActivity : ComponentActivity() {
 
@@ -57,20 +62,41 @@ fun ScriptEditorScreen(
     val uiState by viewModel.uiState.collectAsState()
     val coroutineScope = rememberCoroutineScope()
     val isKeyboardOpen = WindowInsets.isImeVisible
+    var showDeleteConfirm by remember { mutableStateOf(false) }
 
-    val playAction = {
-        coroutineScope.launch {
-            // Save the script first
-            viewModel.saveScript()
+    val wordCount = remember(uiState.content) {
+        val trimmed = uiState.content.trim()
+        if (trimmed.isEmpty()) 0 else trimmed.split(Regex("\\s+")).size
+    }
+    val estimatedMinutes = if (wordCount > 0) (wordCount / REFERENCE_WPM.toFloat()) else 0f
 
-            // Then start the teleprompter service
-            val serviceIntent = Intent(context, TeleprompterService::class.java)
-            serviceIntent.putExtra("text", uiState.content)
-            context.startService(serviceIntent)
+    val playAction: () -> Unit = {
+        when {
+            uiState.content.isBlank() -> {
+                Toast.makeText(context, "Add some script content first", Toast.LENGTH_SHORT).show()
+            }
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context) -> {
+                Toast.makeText(
+                    context,
+                    "Enable \"Display over other apps\" permission first",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            else -> {
+                coroutineScope.launch {
+                    // Save the script first
+                    viewModel.saveScript()
 
-            // Finally, open the camera app
-            val cameraIntent = Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
-            context.startActivity(cameraIntent)
+                    // Then start the teleprompter service
+                    val serviceIntent = Intent(context, TeleprompterService::class.java)
+                    serviceIntent.putExtra("text", uiState.content)
+                    context.startService(serviceIntent)
+
+                    // Finally, open the camera app in video mode (this is a teleprompter, not a photo tool)
+                    val cameraIntent = Intent(MediaStore.INTENT_ACTION_VIDEO_CAMERA)
+                    context.startActivity(cameraIntent)
+                }
+            }
         }
     }
 
@@ -101,25 +127,21 @@ fun ScriptEditorScreen(
                 ),
                 actions = {
                     if (isKeyboardOpen) {
-                        IconButton(onClick = { playAction() }) {
+                        IconButton(onClick = playAction) {
                             Icon(Icons.Default.PlayArrow, contentDescription = "Start Teleprompter")
                         }
                     }
                     IconButton(onClick = {
                         coroutineScope.launch {
                             viewModel.saveScript()
+                            Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show()
                             (context as? ComponentActivity)?.finish()
                         }
                     }) {
                         Icon(Icons.Default.Done, contentDescription = "Save Script")
                     }
                     if (!uiState.isNewScript) {
-                        IconButton(onClick = {
-                            coroutineScope.launch {
-                                viewModel.deleteScript()
-                                (context as? ComponentActivity)?.finish()
-                            }
-                        }) {
+                        IconButton(onClick = { showDeleteConfirm = true }) {
                             Icon(Icons.Default.Delete, contentDescription = "Delete Script")
                         }
                     }
@@ -128,7 +150,7 @@ fun ScriptEditorScreen(
         },
         floatingActionButton = {
             if (!isKeyboardOpen) {
-                FloatingActionButton(onClick = { playAction() }) {
+                FloatingActionButton(onClick = playAction) {
                     Icon(Icons.Default.PlayArrow, contentDescription = "Start Teleprompter")
                 }
             }
@@ -141,6 +163,17 @@ fun ScriptEditorScreen(
                 .padding(16.dp)
                 .imePadding()
         ) {
+            Text(
+                text = if (wordCount > 0) {
+                    val minutesLabel = if (estimatedMinutes < 1f) "<1 min" else "~${estimatedMinutes.roundToInt()} min"
+                    "$wordCount words · $minutesLabel at $REFERENCE_WPM wpm"
+                } else {
+                    "Start typing your script"
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
             BasicTextField(
                 value = uiState.content,
                 onValueChange = { viewModel.updateContent(it) },
@@ -163,5 +196,29 @@ fun ScriptEditorScreen(
                 }
             )
         }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Delete script?") },
+            text = { Text("This can't be undone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteConfirm = false
+                    coroutineScope.launch {
+                        viewModel.deleteScript()
+                        (context as? ComponentActivity)?.finish()
+                    }
+                }) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }

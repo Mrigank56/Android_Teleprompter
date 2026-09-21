@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -14,7 +15,12 @@ import android.os.Build
 import android.os.IBinder
 import android.view.Gravity
 import android.view.WindowManager
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -24,26 +30,50 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.toDp
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.astris.teleprompter.ui.theme.TeleprompterTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 private const val PREFS_NAME = "teleprompter_settings"
 private const val KEY_SPEED = "speed"
 private const val KEY_ALPHA = "alpha"
-private const val KEY_ROTATION = "rotation"
+private const val KEY_MIRROR = "mirror"
+private const val KEY_FONT_SIZE = "font_size"
+private const val ACTION_STOP = "com.astris.teleprompter.action.STOP"
+
+private const val MIN_SPEED_PX = 15f
+private const val MAX_SPEED_PX = 300f
+private const val DEFAULT_SPEED_PX = 60f
+
+private const val MIN_BG_ALPHA = 0f
+private const val MAX_BG_ALPHA = 0.7f
+private const val DEFAULT_BG_ALPHA = 0.18f
+
+private const val MIN_FONT_SP = 16f
+private const val MAX_FONT_SP = 40f
+private const val DEFAULT_FONT_SP = 24f
 
 class TeleprompterService : Service() {
 
@@ -76,6 +106,10 @@ class TeleprompterService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         customLifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_START)
         val text = intent?.getStringExtra("text") ?: ""
         showFloatingWindow(text)
@@ -94,10 +128,19 @@ class TeleprompterService : Service() {
             manager.createNotificationChannel(channel)
         }
 
+        val stopIntent = Intent(this, TeleprompterService::class.java).setAction(ACTION_STOP)
+        val stopPendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+        val stopPendingIntent = PendingIntent.getService(this, 0, stopIntent, stopPendingIntentFlags)
+
         return NotificationCompat.Builder(this, channelId)
             .setContentTitle("Teleprompter Active")
             .setContentText("Tap to open the app.")
             .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .addAction(0, "Stop", stopPendingIntent)
             .build()
     }
 
@@ -107,31 +150,41 @@ class TeleprompterService : Service() {
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.TOP or Gravity.START
         params.x = 0
         params.y = 100
 
+        // Pre-1.0 builds stored speed on a 1..10 scale and defaulted alpha to 0.8 (near-opaque).
+        // Treat values still at those legacy defaults as unset so upgrading users land on the
+        // new smooth-scroll / camera-transparent defaults instead of an unreadable old number.
+        val storedSpeed = prefs.getFloat(KEY_SPEED, DEFAULT_SPEED_PX)
+        val migratedSpeed = if (storedSpeed < MIN_SPEED_PX) DEFAULT_SPEED_PX else storedSpeed
+        val storedAlpha = prefs.getFloat(KEY_ALPHA, DEFAULT_BG_ALPHA)
+        val migratedAlpha = if (storedAlpha >= 0.75f) DEFAULT_BG_ALPHA else storedAlpha
+
         floatingView.setContent {
             TeleprompterTheme {
                 TeleprompterView(
                     text = text,
-                    initialSpeed = prefs.getFloat(KEY_SPEED, 3f),
-                    initialAlpha = prefs.getFloat(KEY_ALPHA, 0.8f),
-                    initialRotation = prefs.getFloat(KEY_ROTATION, 0f),
+                    initialSpeed = migratedSpeed,
+                    initialAlpha = migratedAlpha,
+                    initialMirror = prefs.getBoolean(KEY_MIRROR, false),
+                    initialFontSize = prefs.getFloat(KEY_FONT_SIZE, DEFAULT_FONT_SP),
                     onClose = { stopSelf() },
                     onDrag = { x, y ->
                         params.x += x.roundToInt()
                         params.y += y.roundToInt()
                         windowManager.updateViewLayout(floatingView, params)
                     },
-                    onSettingsChange = { speed, alpha, rotation ->
+                    onSettingsChange = { speed, alpha, fontSize, mirror ->
                         prefs.edit()
                             .putFloat(KEY_SPEED, speed)
                             .putFloat(KEY_ALPHA, alpha)
-                            .putFloat(KEY_ROTATION, rotation)
+                            .putFloat(KEY_FONT_SIZE, fontSize)
+                            .putBoolean(KEY_MIRROR, mirror)
                             .apply()
                     }
                 )
@@ -153,140 +206,356 @@ fun TeleprompterView(
     text: String,
     initialSpeed: Float,
     initialAlpha: Float,
-    initialRotation: Float,
+    initialMirror: Boolean,
+    initialFontSize: Float,
     onClose: () -> Unit,
     onDrag: (Float, Float) -> Unit,
-    onSettingsChange: (Float, Float, Float) -> Unit
+    onSettingsChange: (speed: Float, alpha: Float, fontSize: Float, mirror: Boolean) -> Unit
 ) {
     var isPlaying by remember { mutableStateOf(false) }
     var speed by remember { mutableStateOf(initialSpeed) }
-    var rotation by remember { mutableStateOf(initialRotation) }
-    var alpha by remember { mutableStateOf(initialAlpha) }
-    var showTransparencySlider by remember { mutableStateOf(false) }
-    var showSpeedSlider by remember { mutableStateOf(false) }
+    var bgAlpha by remember { mutableStateOf(initialAlpha) }
+    var mirrored by remember { mutableStateOf(initialMirror) }
+    var fontSize by remember { mutableStateOf(initialFontSize) }
+    var countdownValue by remember { mutableStateOf(0) }
+    var finished by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
+    var controlsVisible by remember { mutableStateOf(true) }
+    var interactionTick by remember { mutableStateOf(0) }
+    var textAreaHeight by remember { mutableStateOf(240.dp) }
+    var contentHeightPx by remember { mutableStateOf(0) }
+
     val scrollState = rememberScrollState()
     val haptics = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
 
-    LaunchedEffect(isPlaying, speed) {
+    fun poke() {
+        interactionTick++
+        controlsVisible = true
+    }
+
+    fun pushSettings() {
+        onSettingsChange(speed, bgAlpha, fontSize, mirrored)
+    }
+
+    val wordCount = remember(text) { text.split(Regex("\\s+")).count { it.isNotBlank() } }
+    val estimatedWpm = remember(speed, contentHeightPx, wordCount) {
+        val totalSeconds = if (speed > 0f) contentHeightPx / speed else 0f
+        if (totalSeconds > 0f) (wordCount / (totalSeconds / 60f)).roundToInt() else 0
+    }
+    val progress = if (scrollState.maxValue > 0) {
+        scrollState.value.toFloat() / scrollState.maxValue.toFloat()
+    } else 0f
+
+    // Auto-hide controls 3s after the last interaction while scrolling, so the camera view
+    // underneath stays unobstructed; any tap/drag resets the timer via poke().
+    LaunchedEffect(isPlaying, interactionTick) {
         if (isPlaying) {
-            val scrollDelay = (100 / speed).toLong()
-            while (true) {
-                scrollState.scrollTo(scrollState.value + 1)
-                delay(scrollDelay)
+            delay(3000)
+            controlsVisible = false
+        } else {
+            controlsVisible = true
+        }
+    }
+
+    // Frame-driven scroll with sub-pixel accumulation: smooth and frame-rate independent at
+    // any speed, unlike a fixed-delay/1px-per-tick loop which stutters at low speeds.
+    LaunchedEffect(isPlaying) {
+        if (!isPlaying) return@LaunchedEffect
+        var lastFrameTimeNanos = -1L
+        var accumulator = 0f
+        while (isActive) {
+            val frameTimeNanos = withFrameNanos { it }
+            if (lastFrameTimeNanos >= 0L) {
+                val dtSeconds = (frameTimeNanos - lastFrameTimeNanos) / 1_000_000_000f
+                accumulator += speed * dtSeconds
+                val deltaPixels = accumulator.toInt()
+                if (deltaPixels > 0) {
+                    accumulator -= deltaPixels
+                    scrollState.dispatchRawDelta(deltaPixels.toFloat())
+                    if (scrollState.value >= scrollState.maxValue) {
+                        isPlaying = false
+                        finished = true
+                    }
+                }
+            }
+            lastFrameTimeNanos = frameTimeNanos
+        }
+    }
+
+    val onPlayToggle: () -> Unit = {
+        poke()
+        when {
+            isPlaying -> isPlaying = false
+            countdownValue > 0 -> countdownValue = 0
+            else -> {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                scope.launch {
+                    finished = false
+                    countdownValue = 3
+                    while (countdownValue > 0) {
+                        delay(600)
+                        countdownValue -= 1
+                    }
+                    isPlaying = true
+                }
             }
         }
     }
 
     Card(
-        modifier = Modifier
-            .padding(8.dp)
-            .pointerInput(Unit) {
-                detectDragGestures { change, dragAmount ->
-                    change.consume()
-                    onDrag(dragAmount.x, dragAmount.y)
-                }
-            }
-            .graphicsLayer(rotationZ = rotation),
+        modifier = Modifier.padding(8.dp),
         shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = alpha))
+        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = bgAlpha))
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(
-                text = text,
-                modifier = Modifier
-                    .height(200.dp)
-                    .verticalScroll(scrollState),
-                color = Color.White,
-                fontSize = 24.sp
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-
-            if (showTransparencySlider) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Slider(
-                        value = alpha,
-                        onValueChange = { newAlpha ->
-                            alpha = newAlpha
-                            onSettingsChange(speed, alpha, rotation)
+            AnimatedVisibility(visible = controlsVisible, enter = fadeIn(), exit = fadeOut()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(20.dp)
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, dragAmount ->
+                                change.consume()
+                                poke()
+                                onDrag(dragAmount.x, dragAmount.y)
+                            }
                         },
-                        valueRange = 0.2f..1f,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(onClick = { showTransparencySlider = false }) {
-                        Icon(Icons.Default.Close, contentDescription = "Close Slider", tint = Color.White)
-                    }
-                }
-            }
-
-            if (showSpeedSlider) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Slider(
-                        value = speed,
-                        onValueChange = { newSpeed ->
-                            speed = newSpeed
-                            onSettingsChange(speed, alpha, rotation)
-                        },
-                        valueRange = 1f..10f,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(onClick = { showSpeedSlider = false }) {
-                        Icon(Icons.Default.Close, contentDescription = "Close Slider", tint = Color.White)
-                    }
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = {
-                    isPlaying = !isPlaying
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                }) {
+                    contentAlignment = Alignment.Center
+                ) {
                     Icon(
-                        if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (isPlaying) "Pause" else "Play",
-                        modifier = Modifier.size(48.dp),
-                        tint = Color.White
+                        Icons.Default.DragIndicator,
+                        contentDescription = "Drag to move",
+                        tint = Color.White.copy(alpha = 0.6f),
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceAround,
-                verticalAlignment = Alignment.CenterVertically
+            LinearProgressIndicator(
+                progress = progress,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp),
+                color = Color.White.copy(alpha = 0.85f),
+                trackColor = Color.White.copy(alpha = 0.15f)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(textAreaHeight)
             ) {
-                IconButton(onClick = {
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onClose()
-                }) {
-                    Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
-                }
+                Text(
+                    text = text,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(scrollState, enabled = !isPlaying)
+                        .pointerInput(Unit) {
+                            detectTapGestures { poke() }
+                        }
+                        .graphicsLayer(scaleX = if (mirrored) -1f else 1f),
+                    style = TextStyle(
+                        color = Color.White,
+                        fontSize = fontSize.sp,
+                        lineHeight = (fontSize * 1.5f).sp,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Start,
+                        shadow = Shadow(color = Color.Black.copy(alpha = 0.9f), blurRadius = 10f, offset = Offset(0f, 0f))
+                    ),
+                    onTextLayout = { layoutResult -> contentHeightPx = layoutResult.size.height }
+                )
 
-                IconButton(onClick = {
-                    showTransparencySlider = !showTransparencySlider
-                    if (showTransparencySlider) showSpeedSlider = false
-                }) {
-                    Icon(Icons.Default.Tonality, contentDescription = "Transparency", tint = Color.White)
-                }
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .height(24.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Black.copy(alpha = bgAlpha.coerceAtLeast(0.35f)), Color.Transparent)
+                            )
+                        )
+                )
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .height(24.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Color.Black.copy(alpha = bgAlpha.coerceAtLeast(0.35f)))
+                            )
+                        )
+                )
 
-                IconButton(onClick = {
-                    showSpeedSlider = !showSpeedSlider
-                    if (showSpeedSlider) showTransparencySlider = false
-                }) {
-                    Icon(Icons.Default.Speed, contentDescription = "Speed", tint = Color.White)
+                if (countdownValue > 0) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.55f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = countdownValue.toString(),
+                            color = Color.White,
+                            fontSize = 64.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
+            }
 
-                IconButton(onClick = {
-                    rotation = if (rotation == 0f) 90f else 0f
-                    onSettingsChange(speed, alpha, rotation)
-                }) {
-                    Icon(Icons.Default.ScreenRotation, contentDescription = "Rotate", tint = Color.White)
+            AnimatedVisibility(visible = controlsVisible, enter = fadeIn(), exit = fadeOut()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(18.dp)
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, dragAmount ->
+                                change.consume()
+                                poke()
+                                val deltaDp = with(density) { dragAmount.y.toDp() }
+                                textAreaHeight = (textAreaHeight + deltaDp).coerceIn(140.dp, 520.dp)
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.UnfoldMore,
+                        contentDescription = "Resize",
+                        tint = Color.White.copy(alpha = 0.5f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            if (finished && !isPlaying) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("End of script", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp)
+                }
+            }
+
+            AnimatedVisibility(visible = controlsVisible, enter = fadeIn(), exit = fadeOut()) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceAround,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = {
+                            poke()
+                            isPlaying = false
+                            countdownValue = 0
+                            finished = false
+                            scope.launch { scrollState.scrollTo(0) }
+                        }) {
+                            Icon(Icons.Default.RestartAlt, contentDescription = "Restart", tint = Color.White)
+                        }
+
+                        IconButton(onClick = onPlayToggle) {
+                            Icon(
+                                if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = if (isPlaying) "Pause" else "Play",
+                                modifier = Modifier.size(44.dp),
+                                tint = Color.White
+                            )
+                        }
+
+                        IconButton(onClick = {
+                            poke()
+                            mirrored = !mirrored
+                            pushSettings()
+                        }) {
+                            Icon(
+                                Icons.Default.Flip,
+                                contentDescription = "Mirror",
+                                tint = if (mirrored) MaterialTheme.colorScheme.primary else Color.White
+                            )
+                        }
+
+                        IconButton(onClick = {
+                            poke()
+                            showSettings = !showSettings
+                        }) {
+                            Icon(
+                                Icons.Default.Tune,
+                                contentDescription = "Settings",
+                                tint = if (showSettings) MaterialTheme.colorScheme.primary else Color.White
+                            )
+                        }
+
+                        IconButton(onClick = {
+                            poke()
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onClose()
+                        }) {
+                            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+                        }
+                    }
+
+                    if (showSettings) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                            Text(
+                                "Background  ${(bgAlpha * 100).roundToInt()}%",
+                                color = Color.White.copy(alpha = 0.85f),
+                                fontSize = 12.sp
+                            )
+                            Slider(
+                                value = bgAlpha,
+                                onValueChange = { poke(); bgAlpha = it; pushSettings() },
+                                valueRange = MIN_BG_ALPHA..MAX_BG_ALPHA
+                            )
+
+                            Text(
+                                if (estimatedWpm > 0) "Speed  ~$estimatedWpm wpm" else "Speed",
+                                color = Color.White.copy(alpha = 0.85f),
+                                fontSize = 12.sp
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = {
+                                    poke()
+                                    speed = (speed - 10f).coerceIn(MIN_SPEED_PX, MAX_SPEED_PX)
+                                    pushSettings()
+                                }, modifier = Modifier.size(32.dp)) {
+                                    Icon(Icons.Default.Remove, contentDescription = "Slower", tint = Color.White)
+                                }
+                                Slider(
+                                    value = speed,
+                                    onValueChange = { poke(); speed = it; pushSettings() },
+                                    valueRange = MIN_SPEED_PX..MAX_SPEED_PX,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                IconButton(onClick = {
+                                    poke()
+                                    speed = (speed + 10f).coerceIn(MIN_SPEED_PX, MAX_SPEED_PX)
+                                    pushSettings()
+                                }, modifier = Modifier.size(32.dp)) {
+                                    Icon(Icons.Default.Add, contentDescription = "Faster", tint = Color.White)
+                                }
+                            }
+
+                            Text(
+                                "Text size  ${fontSize.roundToInt()}sp",
+                                color = Color.White.copy(alpha = 0.85f),
+                                fontSize = 12.sp
+                            )
+                            Slider(
+                                value = fontSize,
+                                onValueChange = { poke(); fontSize = it; pushSettings() },
+                                valueRange = MIN_FONT_SP..MAX_FONT_SP
+                            )
+                        }
+                    }
                 }
             }
         }

@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
@@ -34,7 +35,6 @@ import com.astris.teleprompter.data.Script
 import com.astris.teleprompter.ui.MainViewModel
 import com.astris.teleprompter.ui.ViewModelFactory
 import com.astris.teleprompter.ui.theme.TeleprompterTheme
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class,
     ExperimentalComposeUiApi::class
@@ -68,8 +68,7 @@ class MainActivity : ComponentActivity() {
         val keyboardController = LocalSoftwareKeyboardController.current
         val focusManager = LocalFocusManager.current
         var isSearchFocused by remember { mutableStateOf(false) }
-        val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
-        val scope = rememberCoroutineScope()
+        var scriptPendingDelete by remember { mutableStateOf<Script?>(null) }
 
         var hasPermission by remember {
             mutableStateOf(
@@ -89,90 +88,77 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        ModalNavigationDrawer(
-            drawerState = drawerState,
-            drawerContent = {
-                ModalDrawerSheet {
-                    NavigationDrawerItem(
-                        label = { Text(text = "Toggle Theme") },
-                        selected = false,
-                        onClick = { viewModel.toggleTheme() },
-                        icon = {
-                            Icon(
-                                if (isDarkTheme) Icons.Default.WbSunny else Icons.Default.Brightness2,
-                                contentDescription = "Toggle Theme"
-                            )
-                        }
-                    )
-                }
-            }
-        ) {
-            Scaffold(
-                topBar = {
-                    TopAppBar(
-                        title = {
-                            TextField(
-                                value = searchQuery,
-                                onValueChange = { viewModel.onSearchQueryChange(it) },
-                                placeholder = { Text("Search scripts") },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .onFocusChanged { focusState ->
-                                        isSearchFocused = focusState.isFocused
-                                    },
-                                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
-                                trailingIcon = {
-                                    if (isSearchFocused) {
-                                        IconButton(onClick = {
-                                            viewModel.onSearchQueryChange("")
-                                            keyboardController?.hide()
-                                            focusManager.clearFocus()
-                                        }) {
-                                            Icon(
-                                                Icons.Default.Close,
-                                                contentDescription = "Clear search"
-                                            )
-                                        }
-                                    }
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = {
+                        TextField(
+                            value = searchQuery,
+                            onValueChange = { viewModel.onSearchQueryChange(it) },
+                            placeholder = { Text("Search scripts") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onFocusChanged { focusState ->
+                                    isSearchFocused = focusState.isFocused
                                 },
-                                shape = RoundedCornerShape(24.dp),
-                                colors = TextFieldDefaults.textFieldColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                    focusedIndicatorColor = Color.Transparent,
-                                    unfocusedIndicatorColor = Color.Transparent
-                                )
-                            )
-                        },
-                        colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = Color.Transparent
-                        ),
-                        navigationIcon = {
-                            IconButton(onClick = {
-                                scope.launch {
-                                    drawerState.apply {
-                                        if (isClosed) open() else close()
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+                            trailingIcon = {
+                                if (isSearchFocused) {
+                                    IconButton(onClick = {
+                                        viewModel.onSearchQueryChange("")
+                                        keyboardController?.hide()
+                                        focusManager.clearFocus()
+                                    }) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = "Clear search"
+                                        )
                                     }
                                 }
-                            }) {
-                                Icon(Icons.Default.Menu, contentDescription = "Menu")
-                            }
+                            },
+                            shape = RoundedCornerShape(24.dp),
+                            colors = TextFieldDefaults.textFieldColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent
+                            )
+                        )
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent
+                    ),
+                    navigationIcon = {
+                        IconButton(onClick = { viewModel.toggleTheme() }) {
+                            Icon(
+                                if (isDarkTheme) Icons.Default.WbSunny else Icons.Default.Brightness2,
+                                contentDescription = "Toggle theme"
+                            )
                         }
-                    )
-                },
-                floatingActionButton = {
-                    FloatingActionButton(onClick = {
-                        context.startActivity(Intent(context, ScriptEditorActivity::class.java))
-                    }) {
-                        Icon(Icons.Default.Add, contentDescription = "Add Script")
                     }
+                )
+            },
+            floatingActionButton = {
+                FloatingActionButton(onClick = {
+                    context.startActivity(Intent(context, ScriptEditorActivity::class.java))
+                }) {
+                    Icon(Icons.Default.Add, contentDescription = "Add Script")
                 }
-            ) { paddingValues ->
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues)
-                ) {
-                    if (!hasPermission) {
+            }
+        ) { paddingValues ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+            ) {
+                if (!hasPermission) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "Teleprompter needs permission to draw over other apps so the " +
+                                "scrolling text can float on top of your camera while you record.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
                         Button(
                             onClick = {
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -182,51 +168,73 @@ class MainActivity : ComponentActivity() {
                                     )
                                     permissionLauncher.launch(intent)
                                 }
-                            },
-                            modifier = Modifier.padding(16.dp)
+                            }
                         ) {
                             Text("Grant Overlay Permission")
                         }
                     }
-                    if (uiState.scripts.isEmpty()) {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(if (searchQuery.isEmpty()) "No scripts yet. Tap the '+' button to add one." else "No scripts found.")
-                        }
-                    } else {
-                        LazyVerticalStaggeredGrid(
-                            columns = StaggeredGridCells.Fixed(2),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 8.dp),
-                            contentPadding = PaddingValues(vertical = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalItemSpacing = 8.dp
-                        ) {
-                            items(uiState.scripts) { script ->
-                                ScriptItem(
-                                    script = script,
-                                    onClick = {
-                                        val intent = Intent(context, ScriptEditorActivity::class.java)
-                                        intent.putExtra(EXTRA_SCRIPT_ID, script.id)
-                                        context.startActivity(intent)
-                                    }
-                                )
-                            }
+                }
+                if (uiState.scripts.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(if (searchQuery.isEmpty()) "No scripts yet. Tap the '+' button to add one." else "No scripts found.")
+                    }
+                } else {
+                    LazyVerticalStaggeredGrid(
+                        columns = StaggeredGridCells.Fixed(2),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 8.dp),
+                        contentPadding = PaddingValues(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalItemSpacing = 8.dp
+                    ) {
+                        items(uiState.scripts) { script ->
+                            ScriptItem(
+                                script = script,
+                                onClick = {
+                                    val intent = Intent(context, ScriptEditorActivity::class.java)
+                                    intent.putExtra(EXTRA_SCRIPT_ID, script.id)
+                                    context.startActivity(intent)
+                                },
+                                onLongClick = { scriptPendingDelete = script }
+                            )
                         }
                     }
                 }
             }
         }
+
+        scriptPendingDelete?.let { script ->
+            AlertDialog(
+                onDismissRequest = { scriptPendingDelete = null },
+                title = { Text("Delete \"${script.title}\"?") },
+                text = { Text("This can't be undone.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        viewModel.deleteScript(script)
+                        scriptPendingDelete = null
+                    }) {
+                        Text("Delete")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { scriptPendingDelete = null }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
     }
 
     @Composable
-    fun ScriptItem(script: Script, onClick: () -> Unit) {
+    fun ScriptItem(script: Script, onClick: () -> Unit, onLongClick: () -> Unit) {
         Card(
-            modifier = Modifier.fillMaxWidth(),
-            onClick = onClick
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(onClick = onClick, onLongClick = onLongClick)
         ) {
             Column(
                 modifier = Modifier
